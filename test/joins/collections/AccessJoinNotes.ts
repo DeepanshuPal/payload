@@ -6,6 +6,14 @@ export const AccessJoinNotes: CollectionConfig = {
   slug: accessJoinNotesSlug,
   access: {
     read: ({ req }) => {
+      if (req.context.denyJoinNotes) {
+        return false
+      }
+
+      if (req.context.filterJoinNotes) {
+        return { title: { equals: 'never matches' } }
+      }
+
       if (req.context.useNearAccessConstraint) {
         return { coordinates: { near: [0, 0, 1000] } }
       }
