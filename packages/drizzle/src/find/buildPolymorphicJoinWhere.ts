@@ -279,7 +279,8 @@ const resolveWherePath = ({
   if (schemaPath === 'relationTo') {
     return {
       type: 'scalar',
-      column: sql`${collection}`,
+      // Cast the branch discriminator so PostgreSQL can type an IS NULL check.
+      column: sql`cast(${collection} as text)`,
       pathPlan,
       queryValueContext: {
         type: 'scalar',
