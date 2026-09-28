@@ -6,6 +6,14 @@ export const AccessJoinArticles: CollectionConfig = {
   slug: accessJoinArticlesSlug,
   access: {
     read: ({ req }) => {
+      if (req.context.denyJoinArticles) {
+        return false
+      }
+
+      if (req.context.filterJoinArticles) {
+        return { title: { equals: 'available child' } }
+      }
+
       if (req.context.useNearAccessConstraint) {
         return { coordinates: { near: [0, 0, 1000] } }
       }
