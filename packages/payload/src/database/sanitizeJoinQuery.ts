@@ -1,5 +1,5 @@
 import type { SanitizedCollectionConfig, SanitizedJoin } from '../collections/config/types.js'
-import type { JoinQuery, PayloadRequest } from '../types/index.js'
+import type { JoinQuery, PayloadRequest, Where } from '../types/index.js'
 
 import { executeAccess } from '../auth/executeAccess.js'
 import { QueryError } from '../errors/QueryError.js'
@@ -21,6 +21,8 @@ const sanitizeJoinFieldQuery = async ({
   join,
   joinsQuery,
   overrideAccess,
+  polymorphic,
+  validationWhereByJoin,
   promises,
   req,
 }: {
@@ -29,6 +31,8 @@ const sanitizeJoinFieldQuery = async ({
   join: SanitizedJoin
   joinsQuery: JoinQuery
   overrideAccess: boolean
+  polymorphic: boolean
+  validationWhereByJoin: Map<string, Where>
   promises: Promise<void>[]
   req: PayloadRequest
 }) => {
@@ -49,7 +53,7 @@ const sanitizeJoinFieldQuery = async ({
       )
     : true
 
-  if (accessResult === false) {
+  if (accessResult === false && !polymorphic) {
     ;(joinsQuery as any)[joinPath] = false
     return
   }
@@ -68,6 +72,11 @@ const sanitizeJoinFieldQuery = async ({
     joinQuery.where = combineQueries(joinQuery.where, join.field.where)
   }
 
+  // Validate only caller and field constraints, not access constraints added for earlier targets.
+  if (polymorphic && !validationWhereByJoin.has(joinPath)) {
+    validationWhereByJoin.set(joinPath, joinQuery.where)
+  }
+
   promises.push(
     validateQueryPaths({
       collectionConfig: joinCollectionConfig,
@@ -76,7 +85,7 @@ const sanitizeJoinFieldQuery = async ({
       polymorphicJoin: Array.isArray(join.field.collection),
       req,
       // incoming where input, but we shouldn't validate generated from the access control.
-      where: joinQuery.where,
+      where: polymorphic ? validationWhereByJoin.get(joinPath)! : joinQuery.where,
     }),
     validateSortQuery({
       collectionConfig: joinCollectionConfig,
@@ -86,13 +95,26 @@ const sanitizeJoinFieldQuery = async ({
     }),
   )
 
+  if (accessResult === false) {
+    // A denied polymorphic target must not suppress permitted targets.
+    joinQuery.where = combineQueries(joinQuery.where, {
+      relationTo: { not_equals: collectionSlug },
+    })
+    return
+  }
+
   if (typeof accessResult === 'object') {
     sanitizeWhereQuery({
       fields: joinCollectionConfig.flattenedFields,
       payload: req.payload,
       where: accessResult,
     })
-    joinQuery.where = combineQueries(joinQuery.where, accessResult)
+    joinQuery.where = combineQueries(
+      joinQuery.where,
+      polymorphic
+        ? { or: [{ relationTo: { not_equals: collectionSlug } }, accessResult] }
+        : accessResult,
+    )
   }
 }
 
@@ -117,6 +139,7 @@ export const sanitizeJoinQuery = async ({
 
   const errors: { path: string }[] = []
   const promises: Promise<void>[] = []
+  const validationWhereByJoin = new Map<string, Where>()
 
   for (const collectionSlug in collectionConfig.joins) {
     for (const join of collectionConfig.joins[collectionSlug]!) {
@@ -126,6 +149,8 @@ export const sanitizeJoinQuery = async ({
         join,
         joinsQuery,
         overrideAccess,
+        polymorphic: false,
+        validationWhereByJoin,
         promises,
         req,
       })
@@ -140,6 +165,8 @@ export const sanitizeJoinQuery = async ({
         join,
         joinsQuery,
         overrideAccess,
+        polymorphic: true,
+        validationWhereByJoin,
         promises,
         req,
       })
